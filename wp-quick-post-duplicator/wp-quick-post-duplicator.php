@@ -4,17 +4,16 @@
  *
  *
  * @package WP Quick Post Duplicator
- * @version 2.1
+ * @version 2.2
  * @since 1.0
  */
 /**
- /**
  * Plugin Name: WP Quick Post Duplicator
  * Plugin URI:  https://wordpress.org/plugins/wp-quick-post-duplicator/
  * Description: Copy or Duplicate any post types, including pages, taxonomies & custom fields with a single click.
  * Author:      Arul Prasad J
  * Author URI:  https://profiles.wordpress.org/arulprasadj/
- * Version:     2.1
+ * Version:     2.2
  * Text Domain: wp-quick-post-duplicator
  * Domain Path: /languages
  * License:     GPLv2 or later (license.txt)
@@ -36,110 +35,153 @@
 * - apj_duplicate_post_as_a_draft()
 * Classes list:
 */
-function apj_duplicate_post_link($actions, $post)
-{
-    if (current_user_can('edit_posts'))
-    {
-        if ( $post->post_type == "post" || $post->post_type == "page" ) {
-            $url = admin_url( 'admin.php' );
-            if ( current_user_can( 'edit_post', $post->ID ) ) {
-                // adding a nonce in this link
-                    $copy_link = wp_nonce_url( add_query_arg( array( 'action' => 'apj_duplicate_post_as_a_draft','post'=>$post->ID ), $url ), 'wqpd_clone_post_page_nonce' );
+/**
+ * Add duplicate link to post/page row actions
+ */
+function apj_duplicate_post_link( $actions, $post ) {
 
-                    $actions['duplicate'] = '<a href="' . $copy_link . '" rel="permalink">Duplicate This Item</a>';
-            }
-        }
+    if ( ! current_user_can( 'edit_posts' ) ) {
+        return $actions;
     }
+
+    if ( $post->post_type !== 'post' && $post->post_type !== 'page' ) {
+        return $actions;
+    }
+
+    // Only show link if user can edit THIS post
+    if ( ! current_user_can( 'edit_post', $post->ID ) ) {
+        return $actions;
+    }
+
+    $url = admin_url( 'admin.php' );
+
+    // 🔐 Nonce bound to post ID
+    $copy_link = wp_nonce_url(
+        add_query_arg(
+            array(
+                'action' => 'apj_duplicate_post_as_a_draft',
+                'post'   => $post->ID,
+            ),
+            $url
+        ),
+        'wqpd_clone_post_' . $post->ID
+    );
+
+    $actions['duplicate'] = '<a href="' . esc_url( $copy_link ) . '" rel="permalink">Duplicate This Item</a>';
+
     return $actions;
 }
 
-$post_types = get_post_types('', 'names');
-
-foreach ($post_types as $post_type)
-{
-    add_filter($post_type . '_row_actions', 'apj_duplicate_post_link', 10, 2);
+/**
+ * Attach duplicate link to all post types
+ */
+$post_types = get_post_types( array(), 'names' );
+foreach ( $post_types as $post_type ) {
+    add_filter( $post_type . '_row_actions', 'apj_duplicate_post_link', 10, 2 );
 }
 
-function apj_duplicate_post_as_a_draft()
-{
+/**
+ * Duplicate post handler (SECURE)
+ */
+function apj_duplicate_post_as_a_draft() {
     global $wpdb;
-    //check current user have a preveligies to edit post or page
-    if(!current_user_can( 'edit_posts' )){
-    wp_die("you don't have a permission");
-    }
-	// check user from right place
-	check_admin_referer('wqpd_clone_post_page_nonce');
 
-    if (!(isset($_GET['post']) || isset($_POST['post']) || (isset($_REQUEST['action']) && 'apj_duplicate_post_as_a_draft' == $_REQUEST['action'])))
-    {
-        wp_die('No post to duplicate has been supplied!');
+    // Must be logged in and able to edit posts
+    if ( ! current_user_can( 'edit_posts' ) ) {
+        wp_die( "You don't have permission." );
     }
 
-    $apjvalue1       = intval($_GET['post']);
+    // Validate request
+    if (
+        ! isset( $_GET['post'], $_GET['_wpnonce'] ) ||
+        ! isset( $_REQUEST['action'] ) ||
+        $_REQUEST['action'] !== 'apj_duplicate_post_as_a_draft'
+    ) {
+        wp_die( 'Invalid request.' );
+    }
 
-    $apjvalue2       = intval($_POST['post']);
+    $post_id = absint( $_GET['post'] );
+    if ( ! $post_id ) {
+        wp_die( 'Invalid post ID.' );
+    }
 
-    $post_id         = (isset($apjvalue1) ? $apjvalue1 : $apjvalue2);
+    // 🔐 Verify nonce bound to post
+    check_admin_referer( 'wqpd_clone_post_' . $post_id );
 
-    $post            = get_post($post_id);
+    $post = get_post( $post_id );
+    if ( ! $post ) {
+        wp_die( 'Post not found.' );
+    }
 
-    $current_user    = wp_get_current_user();
-    $new_post_author = $current_user->ID;
+    /**
+     * 🔐 CRITICAL FIX
+     * Ensure user is allowed to READ this post
+     */
+    if ( ! current_user_can( 'read_post', $post_id ) ) {
+        wp_die( 'You are not allowed to duplicate this post.' );
+    }
 
-    if (isset($post) && $post != null)
-    {
+    /**
+     * Extra protection for private posts
+     */
+    if ( $post->post_status === 'private' && ! current_user_can( 'edit_post', $post_id ) ) {
+        wp_die( 'You are not allowed to duplicate private posts.' );
+    }
 
-        $args            = array(
-            'comment_status' => $post->comment_status,
-            'ping_status'    => $post->ping_status,
-            'post_author'    => $new_post_author,
-            'post_content'   => $post->post_content,
-            'post_excerpt'   => $post->post_excerpt,
-            'post_name'      => $post->post_name,
-            'post_parent'    => $post->post_parent,
-            'post_password'  => $post->post_password,
-            'post_status'    => 'draft',
-            'post_title'     => $post->post_title,
-            'post_type'      => $post->post_type,
-            'to_ping'        => $post->to_ping,
-            'menu_order'     => $post->menu_order
-        );
+    $current_user = wp_get_current_user();
 
-        $new_post_id     = wp_insert_post($args);
+    $args = array(
+        'comment_status' => $post->comment_status,
+        'ping_status'    => $post->ping_status,
+        'post_author'    => $current_user->ID,
+        'post_content'   => $post->post_content,
+        'post_excerpt'   => $post->post_excerpt,
+        'post_name'      => $post->post_name,
+        'post_parent'    => $post->post_parent,
+        'post_password'  => $post->post_password,
+        'post_status'    => 'draft',
+        'post_title'     => $post->post_title,
+        'post_type'      => $post->post_type,
+        'to_ping'        => $post->to_ping,
+        'menu_order'     => $post->menu_order,
+    );
 
-        $taxonomies      = get_object_taxonomies($post->post_type);
-        foreach ($taxonomies as $taxonomy)
-        {
-            $post_terms      = wp_get_object_terms($post_id, $taxonomy, array(
-                'fields' => 'slugs'
-            ));
-            wp_set_object_terms($new_post_id, $post_terms, $taxonomy, false);
+    $new_post_id = wp_insert_post( $args );
+
+    if ( is_wp_error( $new_post_id ) ) {
+        wp_die( 'Failed to create duplicate post.' );
+    }
+
+    // Copy taxonomies
+    $taxonomies = get_object_taxonomies( $post->post_type );
+    foreach ( $taxonomies as $taxonomy ) {
+        $terms = wp_get_object_terms( $post_id, $taxonomy, array( 'fields' => 'slugs' ) );
+        wp_set_object_terms( $new_post_id, $terms, $taxonomy, false );
+    }
+
+    // Copy post meta (safe method)
+    $post_meta_infos = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT meta_key, meta_value FROM $wpdb->postmeta WHERE post_id = %d",
+            $post_id
+        )
+    );
+
+    if ( $post_meta_infos ) {
+        foreach ( $post_meta_infos as $meta_info ) {
+            add_post_meta(
+                $new_post_id,
+                $meta_info->meta_key,
+                maybe_unserialize( $meta_info->meta_value )
+            );
         }
-
-        $post_meta_infos = $wpdb->get_results("SELECT meta_key, meta_value FROM $wpdb->postmeta WHERE post_id=$post_id");
-        if (count($post_meta_infos) != 0)
-        {
-            $main_sql_query  = "INSERT INTO $wpdb->postmeta (post_id, meta_key, meta_value) ";
-            foreach ($post_meta_infos as $meta_info)
-            {
-                $meta_key        = $meta_info->meta_key;
-                $meta_value      = addslashes($meta_info->meta_value);
-                $sql_query_select[]                 = "SELECT $new_post_id, '$meta_key', '$meta_value'";
-            }
-            $main_sql_query .= implode(" UNION ALL ", $sql_query_select);
-            $wpdb->query($main_sql_query);
-        }
-
-        wp_redirect(admin_url('edit.php?post_type=' . $post->post_type));
-        exit;
     }
-    else
-    {
-        wp_die('Post creation failed, could not find original post: ' . $post_id);
-    }
+
+    wp_redirect( admin_url( 'edit.php?post_type=' . $post->post_type ) );
+    exit;
 }
-add_action('admin_action_apj_duplicate_post_as_a_draft', 'apj_duplicate_post_as_a_draft');
 
+add_action( 'admin_action_apj_duplicate_post_as_a_draft', 'apj_duplicate_post_as_a_draft' );
 
 function PluginRowMeta($links_array, $plugin_file_name)
 {

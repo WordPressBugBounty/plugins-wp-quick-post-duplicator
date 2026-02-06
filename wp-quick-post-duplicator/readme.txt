@@ -4,8 +4,8 @@
 * Tags:   clone page,wordpress page duplicate, wordpress post duplicate, Copy post, wordpress page duplicator, wordpress post duplicator, Cloner, duplicate post, WP Post Duplicator,Page Duplicate, Post duplicate, duplicate custom posts, duplicate page, duplicate post, duplicate ,custom posts, post, page, duplicate this, duplicate, content duplicate,
 * Donate link:     https://paypal.me/arulprasadj?locale.x=en_GB
 * Requires at least: 3.0
-* Tested up to:      6.4
-* Stable tag:        2.1
+* Tested up to:      6.8
+* Stable tag:        2.2
 * License:           GPLv2 or later
 * License URI:       http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -42,6 +42,10 @@ This section describes how to install the plugin and get it working.
 2. Activate the plugin through the WordPress admin interface.
 
 == Changelog ==
+
+= 2.2 =
+* Security fix: Prevent unauthorized users from duplicating private or restricted posts.
+* Security: Added post-level capability checks and improved nonce validation.
 
 = 2.1 =
 * Security improvements.
